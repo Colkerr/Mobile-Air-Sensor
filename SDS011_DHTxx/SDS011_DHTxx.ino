@@ -5,15 +5,13 @@
 #define Sensor_Password  "sensor_password"  //<<<<<<<<<<<<<<<<<<< and possibly others below <<
 #define SerialSpeed 57600
 #define DHTTYPE DHT22                  
-const long interval = 60 * 1000;        // interval between read sensors (milliseconds)
-const long warmup = 30 * 1000;          // warm up seconds for SDS011
-int iCycleSecs=60;
-int iWarmUpSecs=30;
-long waitForSetUp = 5 * 60 * 1000;      // limit wait for setup 
-long extendWaitForSetUp = 20 * 60 * 1000;    // after setup started extend to 20 minutes
-int rxPin = D1;                         // SDS011 sensor pins on Nodemcu 
+int iCycleSecs=60;                          //value input on set up and stored in EEPROM
+int iWarmUpSecs=30;                         //                  ditto
+long waitForSetUp = 5 * 60 * 1000;          // time out wait for setup 
+long extendWaitForSetUp = 20 * 60 * 1000;   // once setup started extend to 20 minutes
+int rxPin = D1;                             // SDS011 sensor pins on Nodemcu 
 int txPin = D2;
-int DHTPin = D7;                        // pin for temp/humidity
+int DHTPin = D7;                            // pin for temp/humidity
 //------------------above may need to be changed especially Sensor_User and Sensor_Password
 #include <ESP8266WiFi.h>
 #include <WiFiClient.h>
@@ -94,8 +92,8 @@ void loop(void) {
         server.handleClient();
       }
   } else {
-    if ( millis() - last_minute >= interval) { 
-      last_minute += interval;
+    if ( millis() - last_minute >= iCycleSecs * 1000) { 
+      last_minute += iCycleSecs * 1000 ;
       maintainClock();
       readSensors();
     }
