@@ -3,7 +3,6 @@
 
 #define Sensor_User "sensor_user"           //<<<<<<<<<<<<<<<<<<< NOTE change these <<<<<<<<<<
 #define Sensor_Password  "sensor_password"  //<<<<<<<<<<<<<<<<<<< and possibly others below <<
-#define SerialSpeed 57600
 #define DHTTYPE DHT22                  
 int iCycleSecs=60;                          //value input on set up and stored in EEPROM
 int iWarmUpSecs=30;                         //                  ditto
