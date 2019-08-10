@@ -1,17 +1,37 @@
 
 //Save sensor readings to flash memory until reboot when broadcast wifi to allow ftp, deletion and date/time input
+//Using Deep Sleep so wakes evey time into setup() and any only persistence is by using RTC memory
 
 #define Sensor_User "sensor_user"           //<<<<<<<<<<<<<<<<<<< NOTE change these <<<<<<<<<<
 #define Sensor_Password  "sensor_password"  //<<<<<<<<<<<<<<<<<<< and possibly others below <<
-#define DHTTYPE DHT22                  
+#define DHTTYPE DHT11                  
 int iCycleSecs=60;                          //value input on set up and stored in EEPROM
 int iWarmUpSecs=30;                         //                  ditto
 long waitForSetUp = 5 * 60 * 1000;          // time out wait for setup 
 long extendWaitForSetUp = 20 * 60 * 1000;   // once setup started extend to 20 minutes
-int rxPin = D1;                             // SDS011 sensor pins on Nodemcu 
-int txPin = D2;
+int rxPin = D5;                             // SDS011 sensor pins on Nodemcu 
+int txPin = D6;
 int DHTPin = D7;                            // pin for temp/humidity
 //------------------above may need to be changed especially Sensor_User and Sensor_Password
+
+extern "C" {          // this is for the RTC memory read/write functions
+  #include "user_interface.h" 
+}
+
+typedef struct {      // this is for the RTC memory read/write functions
+  char cycleState;    //0=begin, 1=warm up, 2=rest (cycle-warmup)
+  byte fixTime;       //units of 0.1% 
+  char spare[3];      //make up to 4 bytes
+  int iYr;            //4 bytes
+  int iMnth;    
+  int iDay;      
+  int iHr;      
+  int iMin;       
+  int iSec;
+  int timings[2];     //Cycle time and warm up time in seconds 
+} rtcStore;
+
+rtcStore rtcMem;
 #include <ESP8266WiFi.h>
 #include <WiFiClient.h>
 #include <ESP8266WebServer.h>
@@ -32,77 +52,100 @@ ESP8266WebServer server(80);    // Create a webserver object that listens for HT
 FtpServer ftpSrv;
 
 bool handleFileRead(String path);       // send the right file to the client (if it exists)
-bool doneSetDateTime = false; 
 unsigned long previousMillis = 0;
-String fname = "Not_Set_Up_On_Reboot";        //default when power interruption
+String fname = "Rebooted_without_setup";        //default when power interruption
 int iDay; int iMnth; int iYr; int iHr; int iMin; int iSec;
-static uint32_t last_minute;
 
 void setup() {
   Serial.begin(57600);         
-  sds.begin();
-  WiFi.begin();
-  WiFi.forceSleepWake();
-  Serial.println("wifi started");
-  Serial.println(sds.setQueryReportingMode().toString()); // ensures sensor is in 'query' reporting mode
-
-  WiFi.softAP(Sensor_User, Sensor_Password);             // Start the access point
-  Serial.print("Access Point started IP adress = ");
-  Serial.println(WiFi.softAPIP());               // Show IP address
-       
-  pinMode(DHTPin, INPUT);
-  dht.begin();  
+  EEPROM.begin(3);
   
-  EEPROM.begin(10);
-  iCycleSecs = EEPROM.read(0);
-  iWarmUpSecs= EEPROM.read(1);
+  system_rtc_mem_read(64, &rtcMem, sizeof(rtcMem));       //all variables lost after sleep, restore from RTC memory
+  byte checkcyclestate=rtcMem.cycleState;
+  byte mybyte='x';
+  Serial.println(mybyte);
+Serial.print(checkcyclestate);Serial.print("  ");Serial.print(rtcMem.timings[0]);Serial.print("  ");Serial.println(rtcMem.timings[1]);
+Serial.println(rtcMem.fixTime);
+
+  if (rtcMem.cycleState=='1') {    //>>>>>>>>>>>>>Start WARM UP then sleep<<<<<<<<<<<<<
+    Serial.println("state 1, Warm up ");
+    sds.wakeup();
+    rtcMem.cycleState='2';
+    system_rtc_mem_write(64, &rtcMem, sizeof(rtcMem));
+    Serial.println("SLEEP state 1");
+    delay(100);
+    ESP.deepSleep(rtcMem.timings[1] * 1e6, WAKE_RF_DISABLED);   //sleep for warm up seconds
+  } else if (rtcMem.cycleState=='2') {        //>>>>>>>>>>>>>READ SENSORS THEN SLEEP<<<<<<<<<<<<<
+    pinMode(DHTPin, INPUT);
+    dht.begin();  
+    sds.begin();
+    Serial.println(sds.setQueryReportingMode().toString()); // ensures sensor is in 'query' reporting mode
+    Serial.println("state 2, read sensors ");
+    rtcMem.cycleState='1';                         //next state
+    readSensors();   //and save data to SPIFFS
+    long adjustedCycle= ( 1e6 + 1000*(rtcMem.fixTime-100) ) * rtcMem.timings[0];  //fixTime in 0.1% units
+    Serial.print("adjustedCycle   ");Serial.println(adjustedCycle);
+    maintainClock(adjustedCycle);
+    Serial.print(rtcMem.iMin);Serial.print(" :::  ");Serial.print(rtcMem.iSec);
+    system_rtc_mem_write(64, &rtcMem, sizeof(rtcMem));
+    WorkingStateResult state = sds.sleep();
+    if (state.isWorking()) Serial.println("Problem sleeping the sensor.");
+    delay(100);
+    Serial.println("SLEEP state 2");
+    ESP.deepSleep( adjustedCycle - ( rtcMem.timings[1] ) * 1e6, WAKE_RF_DISABLED);   //sleep remainder of cycle
+  } else { 
+    delay(10000);
+    Serial.println("unexpected cycleState" + String(rtcMem.cycleState));
+    Serial.println("Initialise start up -> setup ");
+    rtcMem.timings[0]=EEPROM.read(0);
+    rtcMem.timings[1]=EEPROM.read(1);
+    delay(100);     
+    WiFi.begin();
+    WiFi.forceSleepWake();
+    Serial.println("wifi started");
+
+    WiFi.softAP(Sensor_User, Sensor_Password);             // Start the access point
+    Serial.print("Access Point started IP adress = ");
+    Serial.println(WiFi.softAPIP());               // Show IP address
+
+    if (SPIFFS.begin()) {   
+      Serial.println("SPIFFS opened!");
+      saveRecord("YYYY-MM-DD hh:mm,Temp,Humid,PM2.5,PM10");  //heading and indicate if rebooted without date/time input 
+      ftpSrv.begin(Sensor_User, Sensor_Password); // port 21
+    }
+    
+    server.on("/setup", showSetup);
+    server.on("/setuptimes", setCycleTimes);
+    server.on("/setupclockadjust", setClockAdjust);
+    server.on("/set_date_time", setDateTime);
+    server.on("/delete_all_records", deleteAllRecords);
+    server.onNotFound([]() {                              // If the client requests any URI
+      if (!handleFileRead(server.uri()))                  // send it if it exists
+        server.send(404, "text/plain", "404: Not Found"); // otherwise, respond with a 404 (Not Found) error
+    });
   
-  if (SPIFFS.begin()) {   
-    Serial.println("SPIFFS opened!");
-    saveRecord("YYYY-MM-DD hh:mm,Temp,Humid,PM2.5,PM10");  //heading and indicate if rebooted without date/time input 
-    ftpSrv.begin(Sensor_User, Sensor_Password); // port 21
-  }
-
-  server.on("/setup", showSetup);
-  server.on("/setuptimes", setCycleTimes);
-  server.on("/set_date_time", setDateTime);
-  server.on("/delete_all_records", deleteAllRecords);
-  server.onNotFound([]() {                              // If the client requests any URI
-    if (!handleFileRead(server.uri()))                  // send it if it exists
-      server.send(404, "text/plain", "404: Not Found"); // otherwise, respond with a 404 (Not Found) error
-  });
-
-  server.begin();                           
-  Serial.println("HTTP server started");
-  delay(10);
+    server.begin();                           
+    Serial.println("HTTP server started");
+    delay(10);
+  } 
 }
 
-//broadcast wifi until doneSetDateTime. Until then handle FTP and server Clients
+//only here when power off reboot until set up completed or times out and reverts to logging
+//broadcast wifi, handle FTP and server Clients
 void loop(void) {
-  uint32_t now = millis();
-  if ( !doneSetDateTime ) {
-      if ( millis() > waitForSetUp ) {
-          Serial.println("End of wait time");
-          doneSetDateTime = true;  //don't wait forever for setup to start
-          delay(100);   //time to write message
-          WiFi.mode(WIFI_OFF);
-      } else {
-        ftpSrv.handleFTP();
-        server.handleClient();
-      }
-  } else {
-    if ( millis() - last_minute >= iCycleSecs * 1000) { 
-      last_minute += iCycleSecs * 1000 ;
-      maintainClock();
-      readSensors();
+    if ( millis() > waitForSetUp ) {
+        Serial.println("End of wait time");
+        delay(100);   //time to write message
+        WiFi.mode(WIFI_OFF);
+    } else {
+      ftpSrv.handleFTP();
+      server.handleClient();
     }
-  }
+    delay(1000);
 }
 
 String readSensors() {   //and save to file
       Serial.println("read the sensors");
-      sds.wakeup();
-      delay(30000); // working 30 seconds
       PmResult pm = sds.queryPm();
       if (pm.isOk()) {
         Serial.print("PM2.5 = ");
@@ -111,46 +154,45 @@ String readSensors() {   //and save to file
         Serial.println(pm.pm10);
         Serial.println(pm.toString());
       } else {
-        Serial.print("Could not read values from sensor, reason: ");
+        Serial.print("Sensor problem, reason: ");
         Serial.println(pm.statusToString());
       }
       Temperature = dht.readTemperature(); 
       Humidity = dht.readHumidity(); 
       //printf("'%08.2f'", 10.3456);  '00010.35'
       Serial.print("temp and humidity  ");Serial.print(Temperature);Serial.print("  ");Serial.println(Humidity);
-      String output =  sFormInt(iYr,4,'0') + "-" + sFormInt(iMnth, 2, '0') + "-" + sFormInt(iDay, 2, '0');
-      output = output  + " " + sFormInt(iHr, 2, '0') + ":" + sFormInt(iMin, 2, '0');
+      String output =  sFormInt(rtcMem.iYr,4,'0') + "-" + sFormInt(rtcMem.iMnth, 2, '0') + "-" + sFormInt(rtcMem.iDay, 2, '0');
+      output = output  + " " + sFormInt(rtcMem.iHr, 2, '0') + ":" + sFormInt(rtcMem.iMin, 2, '0')  + ":" + sFormInt(rtcMem.iSec, 2, '0');
       output = output + "," + String(Temperature) + "," + String(Humidity) + "," + String(pm.pm25) + "," + String(pm.pm10);
       Serial.println(output);
       saveRecord(output);
-
-      WorkingStateResult state = sds.sleep();
-      if (state.isWorking()) {
-        Serial.println("Problem with sleeping the sensor.");
-      } else {
-        Serial.println("Sensor is sleeping");
-      }
-      return output;
+      return(output);     // for html if called from setDateTime()
 }
 
 void showSetup() {
   waitForSetUp = extendWaitForSetUp; //must be intended restart so allow longer
+  
   server.send(200, "text/html", "<h1>SETUP</h1>"
       "Logging will commence immediately the date is set or the later of "
       "<br> >>> 5 minutes after boot-up."
       "<br> >>> 20 minutes from this screen opening."
+      "<br> >>> Only submit 1) & 2) if changing values."
       "<br><br>"
       "1) Cycle and warm up times (secs): "
          "<form method='post' action='/setuptimes'/> "
-         "&ensp;<input type='number' name='CycleTime' min=15 max=300 size='3' value='" + String(iCycleSecs) + "'/>"
-         "&ensp;<input type='number' name='WarmUp' min=5 max=30 size='3' value='" + String(iWarmUpSecs) + "'/>"
-         "&ensp;<input type='submit' value='Submit' /> </form>  "     
-      "2) Complete File Transfer. <br><br>"
-      "3) Delete existing records. <br>"
+         "&ensp;<input type='number' name='CycleTime' min='15' max='255' size='3' value='" + String(EEPROM.read(0)) + "'/>"
+         "&ensp;<input type='number' name='WarmUp' min='5' max='30' size='3' value='" + String( EEPROM.read(1)) + "'/>"
+         "&ensp;<input type='submit' value='Submit' /> </form>  "
+      "2) Adjust clock in ( units of 0.1% ): "
+          "<form method='post' action='/setupclockadjust'/> "
+           "&ensp;<input type='number' name='ClockAdjust' min= '-100' max= '100' size='3' value='" + String( EEPROM.read(2) - 100 ) + "'/>"
+           "&ensp;<input type='submit' value='Submit' /> </form>  "
+      "3) Complete File Transfer. <br><br>"
+      "4) Delete existing records. <br>"
          "<form  method='post' name='delete' action='/delete_all_records'>"
          "<p><input type='submit' value='Delete All Records' />"
          "</form>"
-      "4) Set the Date & Time and show first record - takes 30 seconds.  <br>"
+      "5) Set the Date & Time and show first record - takes 30 seconds.  <br>"
          "<form method='post' name='frm' action='/set_date_time'> "
          "<p><input type='submit' value='Set Date & Time' /> "
          "<input type='text' name='product' size='45' /> "
@@ -160,50 +202,67 @@ void showSetup() {
 }
 
 void setCycleTimes() {
-  iCycleSecs = server.arg(0).toInt();
-  iWarmUpSecs = server.arg(1).toInt();
+  rtcMem.timings[0] = server.arg(0).toInt();  //complete cycle in seconds
+  rtcMem.timings[1] = server.arg(1).toInt();  //warmup in seconds
   Serial.println(String(iCycleSecs) + "  " + String(iWarmUpSecs)) ;
-  EEPROM.write(0, iCycleSecs);
-  EEPROM.write(1, iWarmUpSecs);
+  if ( EEPROM.read(0)!=rtcMem.timings[0] ) EEPROM.write(0, rtcMem.timings[0]); //store for reboot on power outage
+  if ( EEPROM.read(1)!=rtcMem.timings[1] ) EEPROM.write(1, rtcMem.timings[1]); 
   EEPROM.commit();
   showSetup();
+}
+
+void setClockAdjust() {
+   rtcMem.fixTime= server.arg(0).toInt() + 100 ;
+   Serial.print("fix time " );Serial.println(rtcMem.fixTime);
+   EEPROM.write(2, rtcMem.fixTime);
+   Serial.println(EEPROM.read(2));
+   EEPROM.commit();
+   showSetup();
 }
 
 void setDateTime() {
   String message = server.arg(0) + "\n";
   Serial.println(message);
-  iYr = message.substring(11, 15).toInt();
-  iDay = message.substring(8, 10).toInt();
-  iHr = message.substring(16, 18).toInt();
-  iMin = message.substring(19, 21).toInt();
-  iSec = message.substring(22, 24).toInt();
-  iMnth = month2Number(message.substring(4, 7));
-  last_minute=millis();  //starting point for readings
-  message.replace(" ", "");
-  fname = message.substring(3, 8) + message.substring(8, 20);
+  rtcMem.iMnth = month2Number(message.substring(4, 7));
+  rtcMem.iYr = message.substring(11, 15).toInt();
+  rtcMem.iDay = message.substring(8, 10).toInt();
+  rtcMem.iHr = message.substring(16, 18).toInt();
+  rtcMem.iMin = message.substring(19, 21).toInt();
+  rtcMem.iSec = message.substring(22, 24).toInt();
+
+  fname = String(rtcMem.iYr) + "-" + String(rtcMem.iMnth) + "-" + String(rtcMem.iDay) + " " + String(rtcMem.iHr) + ":" + String(rtcMem.iMin);
   Serial.println(fname);
   //readSensors in following statement will also save first reacord to file
-  server.send(200, "text/html", "Date & Time is " + sFormInt(iYr, 4, '0') + "/" + sFormInt(iMnth, 2, '0')  + "/" + sFormInt(iDay, 2, '0') + 
-              " " + sFormInt(iHr, 2, '0') + ":" + sFormInt(iMin, 2, '0') + ":" + sFormInt(iSec, 2, '0') +
+  server.send(200, "text/html", "Date & Time is " + sFormInt(rtcMem.iYr, 4, '0') + "/" + sFormInt(rtcMem.iMnth, 2, '0')  + "/" + sFormInt(rtcMem.iDay, 2, '0') + 
+              " " + sFormInt(rtcMem.iHr, 2, '0') + ":" + sFormInt(rtcMem.iMin, 2, '0') + ":" + sFormInt(rtcMem.iSec, 2, '0') +
               "<br>First record = " + readSensors() + "<br>"
               "<h3>Sensor logging starts now. </h3>" 
               );       
-  delay(1000);  
-  waitForSetUp = 0;  //start logging
+  delay(100);  
+  rtcMem.cycleState='2';    //read sensors included warm up
+  system_rtc_mem_write(64, &rtcMem, sizeof(rtcMem));
+  Serial.print("SLEEP after set date time ");
+  Serial.println(rtcMem.timings[1]);
+  delay(100);
+  ESP.deepSleep(rtcMem.timings[1] * 1e6, WAKE_RF_DISABLED);   //sleep for remainder of cycle
 }
 
-void maintainClock() {
-  if (++iMin >= 60) {
-      iMin = 0;
-      if (++iHr >= 24) {
-        iHr = 0;
-        if (++iDay > daysInMonth()) {
-           iDay = 0;
-           if (iDay==31 && iMnth==12) {
-             ++iYr;
-           }
-        }
-     }
+void maintainClock(long adjustedCycle) {
+  rtcMem.iSec += adjustedCycle;
+  if (rtcMem.iSec >=60) {  
+    rtcMem.iSec=rtcMem.iSec % 60;
+    if (++rtcMem.iMin >= 60) {
+        rtcMem.iMin = 0;
+        if (++rtcMem.iHr >= 24) {
+          rtcMem.iHr = 0;
+          if (++rtcMem.iDay > daysInMonth()) {
+             rtcMem.iDay = 0;
+             if (rtcMem.iDay==31 && rtcMem.iMnth==12) {
+               ++rtcMem.iYr;
+             }
+          }
+       }
+    }
   }
 }
 
