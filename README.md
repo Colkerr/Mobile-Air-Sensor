@@ -1,5 +1,5 @@
 # Mobile-Air-Sensor
-Build a low cost air quality sensor: dust, humidity, temperature. Battery current is around 40mA on average for a 60s cycle with 30s warm up. This used a 18650 but 10 hours is around 400mAh so a smaller battery could be used.
+Build a low cost air quality sensor: dust, humidity, temperature. Battery current is around 40mA on average for a 60s cycle with 30s warm up. This used a 18650 but 10 hours is around 400mAh so a smaller battery could be used. A 10cm x 8cm food box was used.
 
 Mobile sensor derived from the Luftdaten design. The code is all new but the hardware is almost the same: SDS011, esp8266 (Nodemcu), DHT22, but case differs.
 
