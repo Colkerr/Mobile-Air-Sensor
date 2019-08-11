@@ -17,4 +17,6 @@ DHT11 (or DHT22 which is better) humidity and temperature sensor
 Micro USB 5V 1A 18650 TP4056 Lithium Battery Charger Module
 2-24V to 2-28V 2A DC-DC SX1308 Step-UP Adjustable Power Module Step Up 
 
-A hot glue gun was ued to fix the charger and step up modules to the battery. I'm waiting on a switch arriving so the on/off is by wire/pin connection in the photos.
+A hot glue gun was used to fix the charger and step up modules to the battery. I'm waiting on a switch arriving so the on/off is by wire/pin connection in the photos.
+
+A simpler version would use a single cell powerbank incorporating the charger and 5v step up circuitry and sockets. A larger or custom made box would be required.
