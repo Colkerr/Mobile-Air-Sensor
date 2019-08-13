@@ -62,10 +62,6 @@ void setup() {
   
   system_rtc_mem_read(64, &rtcMem, sizeof(rtcMem));       //all variables lost after sleep, restore from RTC memory
   byte checkcyclestate=rtcMem.cycleState;
-  byte mybyte='x';
-  Serial.println(mybyte);
-Serial.print(checkcyclestate);Serial.print("  ");Serial.print(rtcMem.timings[0]);Serial.print("  ");Serial.println(rtcMem.timings[1]);
-Serial.println(rtcMem.fixTime);
 
   if (rtcMem.cycleState=='1') {    //>>>>>>>>>>>>>Start WARM UP then sleep<<<<<<<<<<<<<
     Serial.println("state 1, Warm up ");
