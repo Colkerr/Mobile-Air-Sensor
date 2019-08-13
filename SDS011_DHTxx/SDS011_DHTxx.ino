@@ -53,7 +53,7 @@ FtpServer ftpSrv;
 
 bool handleFileRead(String path);       // send the right file to the client (if it exists)
 unsigned long previousMillis = 0;
-String fname = "Rebooted_without_setup";        //default when power interruption
+String fname = "SensorFile";       
 int iDay; int iMnth; int iYr; int iHr; int iMin; int iSec;
 
 void setup() {
@@ -87,11 +87,10 @@ void setup() {
     WorkingStateResult state = sds.sleep();
     if (state.isWorking()) Serial.println("Problem sleeping the sensor.");
     delay(100);
-    Serial.println("SLEEP state 2");
+    Serial.println(" Sleep until state 1");
     ESP.deepSleep( adjustedCycle - ( rtcMem.timings[1] ) * 1e6, WAKE_RF_DISABLED);   //sleep remainder of cycle
   } else { 
     delay(100);
-    Serial.println("unexpected cycleState" + String(rtcMem.cycleState));
     Serial.println("Initialise start up -> setup ");
     rtcMem.timings[0]=EEPROM.read(0);
     rtcMem.timings[1]=EEPROM.read(1);
@@ -106,7 +105,7 @@ void setup() {
 
     if (SPIFFS.begin()) {   
       Serial.println("SPIFFS opened!");
-      saveRecord("YYYY-MM-DD hh:mm,Temp,Humid,PM2.5,PM10");  //heading and indicate if rebooted without date/time input 
+      saveRecord("YYYY-MM-DD hh:mm,Temp,Humid,PM2.5,PM10");  //heading and mark file if rebooted without set up
       ftpSrv.begin(Sensor_User, Sensor_Password); // port 21
     }
     
@@ -131,7 +130,7 @@ void setup() {
 void loop(void) {
     if ( millis() > waitForSetUp ) {
         Serial.println("End of wait time");
-        delay(10);   //time to write message
+        delay(100);   //time to write message
         WiFi.mode(WIFI_OFF);
     } else {
       ftpSrv.handleFTP();
@@ -226,8 +225,6 @@ void setDateTime() {
   rtcMem.iMin = message.substring(19, 21).toInt();
   rtcMem.iSec = message.substring(22, 24).toInt();
 
-  fname = String(rtcMem.iYr) + "-" + String(rtcMem.iMnth) + "-" + String(rtcMem.iDay) + " " + String(rtcMem.iHr) + ":" + String(rtcMem.iMin);
-  Serial.println(fname);
   //readSensors in following statement will also save first reacord to file
   server.send(200, "text/html", "Date & Time is " + sFormInt(rtcMem.iYr, 4, '0') + "/" + sFormInt(rtcMem.iMnth, 2, '0')  + "/" + sFormInt(rtcMem.iDay, 2, '0') + 
               " " + sFormInt(rtcMem.iHr, 2, '0') + ":" + sFormInt(rtcMem.iMin, 2, '0') + ":" + sFormInt(rtcMem.iSec, 2, '0') +
@@ -274,13 +271,26 @@ void deleteAllRecords() {              // When URI / is requested, send a web pa
     f.close();
     deleteStatus = deleteStatus && SPIFFS.remove(fname);
   }
+  saveRecord("YYYY-MM-DD hh:mm,Temp,Humid,PM2.5,PM10");  //heading 
   server.send(200, "text/html", "<h2>Data has " + String(deleteStatus ? " " : "NOT " ) + "been deleted.</h2>  <h3><a href='/setup'>Return</a></h3>" );
 }
 
 void saveRecord(String output) {
-  File sensorData = SPIFFS.open("/" + fname + ".csv", "a");                    
-  sensorData.println(output);
-  sensorData.close();
+  if (SPIFFS.begin() ) {
+    File sensorData = SPIFFS.open("/" + fname + ".csv", "a");    
+    if (!sensorData) {
+      Serial.println("file open failed");
+    } else {
+        sensorData.println(output);
+        delay(100);
+        Serial.println("written to file ");
+        sensorData.close();
+    }
+  } else {
+    Serial.println("SPIFFS begin failed");
+  }
+ Serial.print("save to fname  ");   Serial.println(fname);         Serial.println(output);          
+
 }
 
 bool handleFileRead(String path) { // send the right file to the client (if it exists)
