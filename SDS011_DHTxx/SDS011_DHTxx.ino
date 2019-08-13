@@ -94,7 +94,7 @@ Serial.println(rtcMem.fixTime);
     Serial.println("SLEEP state 2");
     ESP.deepSleep( adjustedCycle - ( rtcMem.timings[1] ) * 1e6, WAKE_RF_DISABLED);   //sleep remainder of cycle
   } else { 
-    delay(10000);
+    delay(100);
     Serial.println("unexpected cycleState" + String(rtcMem.cycleState));
     Serial.println("Initialise start up -> setup ");
     rtcMem.timings[0]=EEPROM.read(0);
@@ -135,13 +135,13 @@ Serial.println(rtcMem.fixTime);
 void loop(void) {
     if ( millis() > waitForSetUp ) {
         Serial.println("End of wait time");
-        delay(100);   //time to write message
+        delay(10);   //time to write message
         WiFi.mode(WIFI_OFF);
     } else {
       ftpSrv.handleFTP();
       server.handleClient();
     }
-    delay(1000);
+    delay(10);
 }
 
 String readSensors() {   //and save to file
