@@ -19,7 +19,7 @@ extern "C" {          // this is for the RTC memory read/write functions
 }
 
 typedef struct {      // this is for the RTC memory read/write functions
-  char cycleState;    //0=begin, 1=warm up, 2=rest (cycle-warmup)
+  char cycleState;    //?=begin, 1=warm up, 2=rest (cycle-warmup)
   byte fixTime;       //units of 0.1% 
   char spare[3];      //make up to 4 bytes
   int iYr;            //4 bytes
@@ -80,13 +80,8 @@ void setup() {
     rtcMem.cycleState='1';                         //next state
     readSensors();   //and save data to SPIFFS
     long adjustedCycle= ( 1e6 + 1000*(rtcMem.fixTime-100) ) * rtcMem.timings[0];  //fixTime in 0.1% units
-    Serial.print("adjustedCycle   ");Serial.println(adjustedCycle);
     maintainClock(adjustedCycle);
-    Serial.print(rtcMem.iMin);Serial.print(" :::  ");Serial.print(rtcMem.iSec);
     system_rtc_mem_write(64, &rtcMem, sizeof(rtcMem));
-    WorkingStateResult state = sds.sleep();
-    if (state.isWorking()) Serial.println("Problem sleeping the sensor.");
-    delay(100);
     Serial.println(" Sleep until state 1");
     ESP.deepSleep( adjustedCycle - ( rtcMem.timings[1] ) * 1e6, WAKE_RF_DISABLED);   //sleep remainder of cycle
   } else { 
@@ -129,9 +124,16 @@ void setup() {
 //broadcast wifi, handle FTP and server Clients
 void loop(void) {
     if ( millis() > waitForSetUp ) {
-        Serial.println("End of wait time");
-        delay(100);   //time to write message
+        Serial.println("End of wait time");            //start cycling
+        rtcMem.cycleState='1';                         //next state
+        readSensors();   //and save data to SPIFFS
+        long adjustedCycle= ( 1e6 + 1000*(rtcMem.fixTime-100) ) * rtcMem.timings[0];  //fixTime in 0.1% units
+        maintainClock(waitForSetUp/1000);    //waitforsetup in milliseconds
+        system_rtc_mem_write(64, &rtcMem, sizeof(rtcMem));
         WiFi.mode(WIFI_OFF);
+        Serial.println(" Sleep until state 1");
+        delay(10);
+        ESP.deepSleep( adjustedCycle - ( rtcMem.timings[1] ) * 1e6, WAKE_RF_DISABLED);   //sleep remainder of cycle
     } else {
       ftpSrv.handleFTP();
       server.handleClient();
@@ -152,14 +154,14 @@ String readSensors() {   //and save to file
         Serial.print("Sensor problem, reason: ");
         Serial.println(pm.statusToString());
       }
+      sds.sleep();
       Temperature = dht.readTemperature(); 
       Humidity = dht.readHumidity(); 
-      //printf("'%08.2f'", 10.3456);  '00010.35'
-      Serial.print("temp and humidity  ");Serial.print(Temperature);Serial.print("  ");Serial.println(Humidity);
+      //Serial.print("temp and humidity  ");Serial.print(Temperature);Serial.print("  ");Serial.println(Humidity);
       String output =  sFormInt(rtcMem.iYr,4,'0') + "-" + sFormInt(rtcMem.iMnth, 2, '0') + "-" + sFormInt(rtcMem.iDay, 2, '0');
       output = output  + " " + sFormInt(rtcMem.iHr, 2, '0') + ":" + sFormInt(rtcMem.iMin, 2, '0')  + ":" + sFormInt(rtcMem.iSec, 2, '0');
       output = output + "," + String(Temperature) + "," + String(Humidity) + "," + String(pm.pm25) + "," + String(pm.pm10);
-      Serial.println(output);
+      //Serial.println(output);
       saveRecord(output);
       return(output);     // for html if called from setDateTime()
 }
@@ -288,9 +290,7 @@ void saveRecord(String output) {
     }
   } else {
     Serial.println("SPIFFS begin failed");
-  }
- Serial.print("save to fname  ");   Serial.println(fname);         Serial.println(output);          
-
+  }       
 }
 
 bool handleFileRead(String path) { // send the right file to the client (if it exists)
