@@ -7,7 +7,7 @@ The cycle and warm up times can be changed at this point and a percentage adjust
 
 The code is all new but the hardware is almost the same: SDS011, esp8266 (Nodemcu), DHT22, but case differs. For deep sleep to operate the D0 pin must be connected to the RST pin after flashing the code. The flash size for SPIFFS has to be set in the Arduino IDE Tools Menu. See the image. 
 
-It then takes one set of sensor readings, displays them to prove working and shuts off WiFi to avoid broadcasting the presence of the unit. If power is interrupted it will reboot, so there is a 5 minute timeout on setup after which sensing continues, except without a date/timestamp. The timeout increases to 20 minutes once setup commences and appears ample to FTP a week of data.
+It then takes one set of sensor readings, displays them to prove working and shuts off WiFi to avoid broadcasting the presence of the unit. If power is interrupted it will reboot, so there is a timeout on setup (see code) after which sensing continues, except without a date/timestamp. The timeout increases to 20 minutes once setup commences and appears ample to FTP  data.
 
 An ESP8266 is not the best choice for a battery powered version but it’s easy to make a cheap portable version using a Li-on 18650, charger/protection board, step up converter, and small food box. 
 
